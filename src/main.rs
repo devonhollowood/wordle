@@ -31,14 +31,37 @@ enum Color {
     Green,
 }
 
+#[inline(always)]
+fn byte_at_idx(word: u64, idx: usize) -> u8 {
+    let shift = 4 - idx;
+    ((word >> (shift * 8)) & 0xff) as u8
+}
+
 type Response = [Color; 5];
 
 fn compute_response(guess: u64, ans: u64) -> Response {
+    let mut counts = [0u8; 26];
+    for idx in 0..5 {
+        let count_idx = byte_at_idx(ans, idx) - b'a';
+        unsafe { *counts.get_unchecked_mut(count_idx as usize) += 1 };
+    }
     let mut response = [Color::Black; 5];
+    // assign greens
     for (idx, color) in response.iter_mut().enumerate() {
-        if matches_byte_at_index(guess, ans, idx) {
+        let guess_char = byte_at_idx(guess, idx);
+        let ans_char = byte_at_idx(ans, idx);
+        let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
+        if guess_char == ans_char {
+            *remaining -= 1;
             *color = Color::Green;
-        } else if has_byte_at_index(guess, ans, idx) {
+        }
+    }
+    // assign yellows
+    for (idx, color) in response.iter_mut().enumerate() {
+        let guess_char = byte_at_idx(guess, idx);
+        let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
+        if *remaining != 0 {
+            *remaining -= 1;
             *color = Color::Yellow;
         }
     }
@@ -81,46 +104,51 @@ fn read_response() -> Response {
 }
 
 #[inline]
-/// returns whether the `idx` letter in the word represented by `a` and `b` matches
-fn matches_byte_at_index(a: u64, b: u64, idx: usize) -> bool {
-    // shift is opposite of index because of endianness
-    let shift = 4 - idx;
-    (a >> (shift * 8)) & 0xff == (b >> (shift * 8)) & 0xff
-}
-
-#[inline]
-/// Finds whether `haystack` contains the letter at `idx` in the word represented by `needle`
-fn has_byte_at_index(needle: u64, haystack: u64, idx: usize) -> bool {
-    // shift is opposite of index because of endianness
-    let shift = 4 - idx;
-    let byte = (needle >> (shift * 8)) & 0xff;
-    for cand_shift in 0..5 {
-        if (haystack >> (cand_shift * 8)) & 0xff == byte {
-            return true;
-        }
-    }
-    false
-}
-
-#[inline]
 /// Returns whether `candidate` would be eliminated by the given `guess` and `response`
 fn eliminates(guess: u64, response: Response, candidate: u64) -> bool {
+    // it would be nice to just have this be compute_response(guess, candidate) == response
+    // but the short circuiting in this implementation saves considerable time
+    let mut counts = [0u8; 26];
+    for idx in 0..5 {
+        let count_idx = byte_at_idx(candidate, idx) - b'a';
+        unsafe { *counts.get_unchecked_mut(count_idx as usize) += 1 };
+    }
+    // mark greens
     for (idx, color) in response.iter().copied().enumerate() {
+        let guess_char = byte_at_idx(guess, idx);
+        let cand_char = byte_at_idx(candidate, idx);
+        let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
         match color {
             Color::Green => {
-                if !matches_byte_at_index(guess, candidate, idx) {
+                if *remaining == 0 {
                     return true;
                 }
+                if guess_char != cand_char {
+                    return true;
+                }
+                *remaining -= 1;
             }
+            _ => continue,
+        }
+    }
+    // mark yellows
+    for (idx, color) in response.iter().copied().enumerate() {
+        let guess_char = byte_at_idx(guess, idx);
+        let cand_char = byte_at_idx(candidate, idx);
+        let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
+        match color {
+            Color::Green => continue,
             Color::Yellow => {
-                if !has_byte_at_index(guess, candidate, idx)
-                    || matches_byte_at_index(guess, candidate, idx)
-                {
+                if *remaining == 0 {
                     return true;
                 }
+                if guess_char == cand_char {
+                    return true;
+                }
+                *remaining -= 1;
             }
             Color::Black => {
-                if has_byte_at_index(guess, candidate, idx) {
+                if *remaining != 0 {
                     return true;
                 }
             }
@@ -262,12 +290,17 @@ mod tests {
         let answer = word_to_u64(b"abcde");
         assert_eq!(
             compute_response(word_to_u64(b"aabxx"), answer),
-            [Green, Yellow, Yellow, Black, Black]
+            [Green, Black, Yellow, Black, Black]
         );
 
         assert_eq!(
             compute_response(word_to_u64(b"aaaaa"), answer),
-            [Green, Yellow, Yellow, Yellow, Yellow]
+            [Green, Black, Black, Black, Black]
+        );
+
+        assert_eq!(
+            compute_response(word_to_u64(b"bbbbb"), answer),
+            [Black, Green, Black, Black, Black]
         );
 
         assert_eq!(
@@ -283,13 +316,13 @@ mod tests {
         use Color::*;
         let answer = word_to_u64(b"abcde");
         let guess = word_to_u64(b"aabxx");
-        let response = [Green, Yellow, Yellow, Black, Black];
+        let response = [Green, Black, Yellow, Black, Black];
 
         // the correct answer should not be eliminated
         assert!(!eliminates(guess, response, answer));
 
         // yellow where green should be
-        assert!(eliminates(guess, response, word_to_u64(b"bbcde")));
+        assert!(eliminates(guess, response, word_to_u64(b"bzcde")));
 
         // unknown where green should be
         assert!(eliminates(guess, response, word_to_u64(b"zbcde")));
@@ -298,10 +331,29 @@ mod tests {
         assert!(eliminates(guess, response, word_to_u64(b"azcde")));
 
         // yellow in same spot
-        assert!(eliminates(guess, response, word_to_u64(b"abbde")));
+        assert!(eliminates(guess, response, word_to_u64(b"azbde")));
 
         // contains black
         assert!(eliminates(guess, response, word_to_u64(b"axcdb")));
+    }
+
+    #[test]
+    fn regression_test_compute_response() {
+        use Color::*;
+        assert_eq!(
+            compute_response(word_to_u64(b"worry"), word_to_u64(b"purge")),
+            [Black, Black, Green, Black, Black]
+        );
+
+        assert_eq!(
+            compute_response(word_to_u64(b"roate"), word_to_u64(b"purge")),
+            [Yellow, Black, Black, Black, Green]
+        );
+
+        assert_eq!(
+            compute_response(word_to_u64(b"roate"), word_to_u64(b"sling")),
+            [Black, Black, Black, Black, Black]
+        );
     }
 
     #[test]
@@ -311,6 +363,18 @@ mod tests {
             word_to_u64(b"roate"),
             [Black, Black, Black, Black, Green],
             word_to_u64(b"sling")
+        ));
+
+        assert!(!eliminates(
+            word_to_u64(b"roate"),
+            [Black, Black, Yellow, Green, Green],
+            word_to_u64(b"paste")
+        ));
+
+        assert!(!eliminates(
+            word_to_u64(b"crepe"),
+            [Black, Black, Black, Yellow, Green],
+            word_to_u64(b"paste")
         ));
     }
 }
