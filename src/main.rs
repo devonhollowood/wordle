@@ -1,5 +1,4 @@
 use rayon::prelude::*;
-use std::io::BufRead;
 
 /// store a 5-letter word as a u64, where the 5 least significant bytes are the ascii for the
 /// letters of the word
@@ -53,8 +52,11 @@ fn compute_response(guess: u64, ans: u64) -> Response {
 /// - y for yellow
 /// - x for black
 fn read_response() -> Response {
-    for line in std::io::stdin().lock().lines() {
-        let line = line.unwrap();
+    'outer: loop {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .expect("reached end of stdin while awaiting response");
         let line = line.trim();
         if line.len() != 5 {
             eprintln!("response must contain exactly 5 characters");
@@ -70,13 +72,12 @@ fn read_response() -> Response {
                     eprintln!(
                         "response should be 'g' for green, 'y' for yellow, and 'x' for black"
                     );
-                    continue;
+                    continue 'outer;
                 }
             }
         }
         return response;
     }
-    panic!("end of stdin reached");
 }
 
 #[inline]
