@@ -137,9 +137,14 @@ struct Solver {
 
 impl Solver {
     fn new() -> Self {
+        let mut guesses = load_words(include_str!("../data/guess_only.txt"));
+        let answers = load_words(include_str!("../data/answers.txt"));
+        // put words in `answers` last, meaning they are preferred by max_by_key
+        guesses.extend(answers.iter());
+
         Solver {
-            guesses: load_words(include_str!("../data/guesses.txt")),
-            answers: load_words(include_str!("../data/answers.txt")),
+            guesses,
+            answers,
             responses: Vec::new(),
         }
     }
