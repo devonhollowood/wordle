@@ -172,18 +172,20 @@ fn eliminates(guess: u64, response: Response, candidate: u64) -> bool {
 
 #[derive(Debug, Clone)]
 struct Solver {
+    /// guess-only list
     guesses: Vec<u64>,
+    /// answer-only list
     answers: Vec<u64>,
+    /// list of entered responses so far
     responses: Vec<Response>,
+    /// whether we are playing in hard mode
     hard_mode: bool,
 }
 
 impl Solver {
     fn new() -> Self {
-        let mut guesses = load_words(include_str!("../data/guess_only.txt"));
+        let guesses = load_words(include_str!("../data/guess_only.txt"));
         let answers = load_words(include_str!("../data/answers.txt"));
-        // put words in `answers` last, meaning they are preferred by max_by_key
-        guesses.extend(answers.iter());
 
         Solver {
             guesses,
@@ -197,6 +199,7 @@ impl Solver {
         self.guesses
             .par_iter()
             .copied()
+            .chain(self.answers.par_iter().copied())
             .max_by_key(|g| self.eliminated_words(*g))
             .expect("no more remaining valid guesses =(")
     }
@@ -226,13 +229,24 @@ impl Solver {
 
     /// learn from a guess / response pair
     fn learn(&mut self, guess: u64, response: Response) {
+        if self.hard_mode {
+            // only guesses which meet the criteria are valid now
+            self.guesses
+                .retain(|ans| !eliminates(guess, response, *ans));
+        } else {
+            // we prefer clues in the answers-only list, so move newly-invalidated answers to the
+            // guess-only list
+            self.guesses.extend(
+                self.answers
+                    .iter()
+                    .copied()
+                    .filter(|ans| eliminates(guess, response, *ans)),
+            );
+            // we'll delete these from `answers` in a second.
+        }
         self.answers
             .retain(|ans| !eliminates(guess, response, *ans));
         self.responses.push(response);
-        if self.hard_mode {
-            self.guesses
-                .retain(|ans| !eliminates(guess, response, *ans));
-        }
     }
 }
 
@@ -287,6 +301,20 @@ fn main() {
     }
 
     loop {
+        // print out remaining word info
+        let examples: Vec<String> = solver
+            .answers
+            .iter()
+            .take(5)
+            .map(|a| u64_to_word(*a))
+            .collect();
+        println!(
+            "{} remaining words. Examples: {}{}",
+            solver.answers.len(),
+            examples.join(", "),
+            if examples.len() > 5 { "..." } else { "" }
+        );
+
         // generate guess
         let start = std::time::Instant::now();
         let guess = solver.make_guess();
@@ -304,15 +332,6 @@ fn main() {
         // read and learn from response
         let response = read_response();
         solver.learn(guess, response);
-
-        // print out example remaining words
-        let examples: Vec<String> = solver
-            .answers
-            .iter()
-            .take(5)
-            .map(|a| u64_to_word(*a))
-            .collect();
-        println!("example remaining words: {}", examples.join(", "));
 
         // exit if we are done!
         if response.iter().all(|c| *c == Color::Green) {
@@ -437,5 +456,22 @@ mod tests {
             [Black, Black, Black, Yellow, Green],
             word_to_u64(b"paste")
         ));
+    }
+
+    #[test]
+    fn test_solver_prefers_answers() {
+        // example taken from observed bug
+        let crick = word_to_u64(b"crick");
+        let crimp = word_to_u64(b"crimp");
+        let wreck = word_to_u64(b"wreck");
+
+        let solver = Solver {
+            guesses: vec![wreck, crick, crimp],
+            answers: vec![crick, crimp],
+            responses: vec![],
+            hard_mode: false,
+        };
+
+        assert_eq!(solver.make_guess(), crimp);
     }
 }
