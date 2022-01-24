@@ -304,6 +304,10 @@ fn main() {
     }
 
     loop {
+        if solver.answers.is_empty() {
+            panic!("no more remaining valid answers =(")
+        }
+
         // print out remaining word info
         let examples: Vec<String> = solver
             .answers
@@ -311,12 +315,19 @@ fn main() {
             .take(5)
             .map(|a| u64_to_word(*a))
             .collect();
-        println!(
-            "{} remaining words. Examples: {}{}",
-            solver.answers.len(),
-            examples.join(", "),
-            if examples.len() > 5 { "..." } else { "" }
-        );
+        if solver.answers.len() > 5 {
+            println!(
+                "{} remaining words. Examples: {}...",
+                solver.answers.len(),
+                examples.join(", "),
+            );
+        } else {
+            println!(
+                "{} remaining words: {}",
+                solver.answers.len(),
+                examples.join(", "),
+            );
+        }
 
         // generate guess
         let start = std::time::Instant::now();
