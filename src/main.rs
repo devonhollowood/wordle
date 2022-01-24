@@ -1,5 +1,6 @@
 use clap::Parser;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 /// store a 5-letter word as a u64, where the 5 least significant bytes are the ascii for the
 /// letters of the word
@@ -37,7 +38,7 @@ fn load_words(contents: &str) -> Vec<u64> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Color {
     Black,
     Yellow,
@@ -220,14 +221,15 @@ impl Solver {
     /// returns sum of number of words that would be eliminated by `guess` for each remaining
     /// possible answer
     fn eliminated_words(&self, guess: u64) -> usize {
-        self.answers
-            .iter()
-            .copied()
-            .map(|ans| {
-                let response = compute_response(guess, ans);
-                self.count_eliminations(guess, response)
-            })
-            .sum()
+        let mut cache = HashMap::new();
+        let mut sum = 0;
+        for &ans in &self.answers {
+            let response = compute_response(guess, ans);
+            sum += *cache
+                .entry(response)
+                .or_insert_with(|| self.count_eliminations(guess, response))
+        }
+        sum
     }
 
     /// learn from a guess / response pair
