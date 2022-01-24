@@ -4,7 +4,19 @@ use rayon::prelude::*;
 /// store a 5-letter word as a u64, where the 5 least significant bytes are the ascii for the
 /// letters of the word
 fn word_to_u64(word: &[u8]) -> u64 {
-    word.iter().copied().fold(0, |acc, b| (acc << 8) + b as u64)
+    word.iter()
+        .copied()
+        .inspect(|&c| {
+            if !(b'a' <= c || c <= b'z') {
+                panic!(
+                    "tried to compress invalid character {} ({:x}) in word {}",
+                    c as char,
+                    c,
+                    std::str::from_utf8(word).unwrap()
+                );
+            }
+        })
+        .fold(0, |acc, b| (acc << 8) + b as u64)
 }
 
 /// retrieves the word stored by `word_to_u64`
@@ -182,14 +194,6 @@ impl Solver {
     }
 
     fn make_guess(&self) -> u64 {
-        if self.answers.is_empty() {
-            panic!("no valid words left!");
-        }
-        if self.answers.len() == 1 {
-            // need special case, otherwise it gets confused by the fact that everything eliminates
-            // everything
-            return self.answers[0];
-        }
         self.guesses
             .par_iter()
             .copied()
@@ -243,7 +247,7 @@ fn print_time(duration: std::time::Duration) -> String {
 }
 
 fn main() {
-    let opts = Options::parse();
+    let mut opts = Options::parse();
 
     let load_start = std::time::Instant::now();
     let mut solver = Solver::new();
@@ -254,6 +258,32 @@ fn main() {
     );
     if opts.hard_mode {
         solver.hard_mode = true;
+    }
+
+    // check guesses
+    for guess in opts.guesses.iter_mut() {
+        *guess = guess.to_lowercase();
+        if !guess.chars().all(|c| c.is_ascii_alphabetic()) {
+            panic!(
+                "guess {} must be only have ASCII alphabetic characters",
+                guess
+            );
+        }
+        if guess.len() != 5 {
+            panic!(
+                "guesses must contain exactly 5 characters, but {} had {}",
+                guess,
+                guess.len()
+            );
+        }
+    }
+
+    // handle initial guesses
+    for guess in opts.guesses {
+        println!("what was the response to {}?", guess);
+        let response = read_response();
+        let guess = word_to_u64(guess.as_bytes());
+        solver.learn(guess, response)
     }
 
     loop {
@@ -298,6 +328,12 @@ struct Options {
     #[clap(short, long)]
     /// if set, all guesses will meet all criteria so far
     hard_mode: bool,
+
+    #[clap(short, long)]
+    /// initial guesses (repeat once per guess)
+    ///
+    /// `wordle` will prompt for the responses to each
+    guesses: Vec<String>,
 }
 
 #[cfg(test)]
