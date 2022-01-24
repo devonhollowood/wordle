@@ -1,3 +1,4 @@
+use clap::Parser;
 use rayon::prelude::*;
 
 /// store a 5-letter word as a u64, where the 5 least significant bytes are the ascii for the
@@ -162,6 +163,7 @@ struct Solver {
     guesses: Vec<u64>,
     answers: Vec<u64>,
     responses: Vec<Response>,
+    hard_mode: bool,
 }
 
 impl Solver {
@@ -175,6 +177,7 @@ impl Solver {
             guesses,
             answers,
             responses: Vec::new(),
+            hard_mode: false,
         }
     }
 
@@ -222,6 +225,10 @@ impl Solver {
         self.answers
             .retain(|ans| !eliminates(guess, response, *ans));
         self.responses.push(response);
+        if self.hard_mode {
+            self.guesses
+                .retain(|ans| !eliminates(guess, response, *ans));
+        }
     }
 }
 
@@ -236,6 +243,8 @@ fn print_time(duration: std::time::Duration) -> String {
 }
 
 fn main() {
+    let opts = Options::parse();
+
     let load_start = std::time::Instant::now();
     let mut solver = Solver::new();
     let load_end = std::time::Instant::now();
@@ -243,6 +252,9 @@ fn main() {
         "loaded dictionaries in {}",
         print_time(load_end - load_start)
     );
+    if opts.hard_mode {
+        solver.hard_mode = true;
+    }
 
     loop {
         // generate guess
@@ -278,6 +290,14 @@ fn main() {
             break;
         }
     }
+}
+
+#[derive(clap::Parser)]
+#[clap(name = "wordle")]
+struct Options {
+    #[clap(short, long)]
+    /// if set, all guesses will meet all criteria so far
+    hard_mode: bool,
 }
 
 #[cfg(test)]

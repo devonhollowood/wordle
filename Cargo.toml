@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 rayon = "1.5"
+clap = { version = "3", features = ["derive"] }
