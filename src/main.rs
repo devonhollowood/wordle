@@ -418,20 +418,20 @@ mod tests {
     #[test]
     fn regression_test_compute_response() {
         use Color::*;
-        // assert_eq!(
-        //     compute_response(word_to_u64(b"worry"), word_to_u64(b"purge")),
-        //     [Black, Black, Green, Black, Black]
-        // );
+        assert_eq!(
+            compute_response(word_to_u64(b"worry"), word_to_u64(b"purge")),
+            [Black, Black, Green, Black, Black]
+        );
 
-        // assert_eq!(
-        //     compute_response(word_to_u64(b"roate"), word_to_u64(b"purge")),
-        //     [Yellow, Black, Black, Black, Green]
-        // );
+        assert_eq!(
+            compute_response(word_to_u64(b"roate"), word_to_u64(b"purge")),
+            [Yellow, Black, Black, Black, Green]
+        );
 
-        // assert_eq!(
-        //     compute_response(word_to_u64(b"roate"), word_to_u64(b"sling")),
-        //     [Black, Black, Black, Black, Black]
-        // );
+        assert_eq!(
+            compute_response(word_to_u64(b"roate"), word_to_u64(b"sling")),
+            [Black, Black, Black, Black, Black]
+        );
 
         assert_eq!(
             compute_response(word_to_u64(b"wreck"), word_to_u64(b"crick")),
