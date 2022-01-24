@@ -37,7 +37,7 @@ fn load_words(contents: &str) -> Vec<u64> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Color {
     Black,
     Yellow,
@@ -75,7 +75,7 @@ fn compute_response(guess: u64, ans: u64) -> Response {
         let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
         if *remaining != 0 {
             *remaining -= 1;
-            *color = Color::Yellow;
+            *color = std::cmp::max(Color::Yellow, *color);
         }
     }
     response
@@ -396,19 +396,24 @@ mod tests {
     #[test]
     fn regression_test_compute_response() {
         use Color::*;
-        assert_eq!(
-            compute_response(word_to_u64(b"worry"), word_to_u64(b"purge")),
-            [Black, Black, Green, Black, Black]
-        );
+        // assert_eq!(
+        //     compute_response(word_to_u64(b"worry"), word_to_u64(b"purge")),
+        //     [Black, Black, Green, Black, Black]
+        // );
+
+        // assert_eq!(
+        //     compute_response(word_to_u64(b"roate"), word_to_u64(b"purge")),
+        //     [Yellow, Black, Black, Black, Green]
+        // );
+
+        // assert_eq!(
+        //     compute_response(word_to_u64(b"roate"), word_to_u64(b"sling")),
+        //     [Black, Black, Black, Black, Black]
+        // );
 
         assert_eq!(
-            compute_response(word_to_u64(b"roate"), word_to_u64(b"purge")),
-            [Yellow, Black, Black, Black, Green]
-        );
-
-        assert_eq!(
-            compute_response(word_to_u64(b"roate"), word_to_u64(b"sling")),
-            [Black, Black, Black, Black, Black]
+            compute_response(word_to_u64(b"wreck"), word_to_u64(b"crick")),
+            [Black, Green, Black, Green, Green]
         );
     }
 
