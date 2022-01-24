@@ -37,7 +37,7 @@ fn load_words(contents: &str) -> Vec<u64> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Color {
     Black,
     Yellow,
@@ -71,11 +71,14 @@ fn compute_response(guess: u64, ans: u64) -> Response {
     }
     // assign yellows
     for (idx, color) in response.iter_mut().enumerate() {
+        if *color == Color::Green {
+            continue;
+        }
         let guess_char = byte_at_idx(guess, idx);
         let remaining = unsafe { counts.get_unchecked_mut((guess_char - b'a') as usize) };
         if *remaining != 0 {
             *remaining -= 1;
-            *color = std::cmp::max(Color::Yellow, *color);
+            *color = Color::Yellow;
         }
     }
     response
@@ -473,5 +476,19 @@ mod tests {
         };
 
         assert_eq!(solver.make_guess(), crimp);
+    }
+
+    #[test]
+    fn test_self_elimination() {
+        let guess = word_to_u64(b"creme");
+        for word in ["creep", "crepe", "crimp", "crisp", "gripe"] {
+            let ans = word_to_u64(word.as_bytes());
+            let response = compute_response(guess, ans);
+            assert!(
+                !eliminates(guess, response, ans),
+                "{} eliminated itself",
+                word
+            );
+        }
     }
 }
