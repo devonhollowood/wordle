@@ -175,6 +175,102 @@ fn eliminates(guess: u64, response: Response, candidate: u64) -> bool {
 }
 
 #[derive(Debug, Clone)]
+/// optimized to go fast
+///
+/// Like, really fast.
+///
+/// This is a column-major table of info about the remaining words
+struct WordTable {
+    /// these five columns contain the ascii byte in each position of the word
+    letter: [Vec<u8>; 5],
+    /// these 26 columns contain the number of times a..z appear
+    count: [Vec<u8>; 26],
+}
+
+impl WordTable {
+    #[allow(clippy::needless_range_loop)]
+    fn from_words(words: &[u64]) -> Self {
+        // kinda awkward to initialize because vec isn't copy
+        let mut letter = [(); 5].map(|_| vec![0; words.len()]);
+        let mut count = [(); 26].map(|_| vec![0; words.len()]);
+
+        for (word_idx, word) in words.iter().copied().enumerate() {
+            for let_idx in 0..5 {
+                let byte = byte_at_idx(word, let_idx);
+                letter[let_idx][word_idx] = byte;
+                count[(byte - b'a') as usize][word_idx] += 1;
+            }
+        }
+
+        Self { letter, count }
+    }
+
+    fn len(&self) -> usize {
+        self.letter[0].len()
+    }
+
+    fn count_eliminations(&self, guess: u64, response: Response) -> usize {
+        // counts of present letters
+        let mut present_counts = [0; 26];
+        // counts of absent letters
+        let mut absent_counts = [0; 26];
+
+        // whether to eliminate word
+        let mut eliminate = vec![false; self.len()];
+
+        for (guess_idx, color) in (0..5).zip(response.into_iter()) {
+            let guess_byte = byte_at_idx(guess, guess_idx);
+            let counts_idx = (guess_byte - b'a') as usize;
+            assert!(counts_idx < 26);
+            match color {
+                Color::Green => {
+                    *present_counts.get_mut(counts_idx).unwrap() += 1;
+                    assert_eq!(eliminate.len(), self.letter[guess_idx].len());
+                    for (eliminate, word_byte) in
+                        eliminate.iter_mut().zip(self.letter[guess_idx].iter())
+                    {
+                        *eliminate |= guess_byte != *word_byte;
+                    }
+                }
+                Color::Yellow => {
+                    *present_counts.get_mut(counts_idx).unwrap() += 1;
+                    for (eliminate, word_byte) in
+                        eliminate.iter_mut().zip(self.letter[guess_idx].iter())
+                    {
+                        *eliminate |= guess_byte == *word_byte;
+                    }
+                }
+                Color::Black => *absent_counts.get_mut(counts_idx).unwrap() += 1,
+            }
+        }
+
+        for (counts_idx, (pres_count, abs_count)) in present_counts
+            .into_iter()
+            .zip(absent_counts.into_iter())
+            .enumerate()
+        {
+            if abs_count > 0 {
+                assert_eq!(eliminate.len(), self.count[counts_idx].len());
+                for (eliminate, word_count) in
+                    eliminate.iter_mut().zip(self.count[counts_idx].iter())
+                {
+                    *eliminate |= pres_count != *word_count;
+                }
+            } else if pres_count > 0 {
+                assert_eq!(eliminate.len(), self.count[counts_idx].len());
+                for (eliminate, word_count) in
+                    eliminate.iter_mut().zip(self.count[counts_idx].iter())
+                {
+                    *eliminate |= *word_count < pres_count;
+                }
+            }
+        }
+
+        eliminate.into_iter().filter(|e| *e).count()
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Solver {
     /// guess-only list
     guesses: Vec<u64>,
@@ -200,11 +296,12 @@ impl Solver {
     }
 
     fn make_guess(&self) -> u64 {
+        let table = WordTable::from_words(&self.answers);
         self.guesses
             .par_iter()
             .copied()
             .chain(self.answers.par_iter().copied())
-            .max_by_key(|g| self.eliminated_words(*g))
+            .max_by_key(|g| self.eliminated_words_from_table(*g, &table))
             .expect("no more remaining valid guesses =(")
     }
 
@@ -216,6 +313,20 @@ impl Solver {
             .copied()
             .filter(|cand| eliminates(guess, response, *cand))
             .count()
+    }
+
+    /// returns sum of number of words that would be eliminated by `guess` for each remaining
+    /// possible answer, but faster
+    fn eliminated_words_from_table(&self, guess: u64, table: &WordTable) -> usize {
+        let mut cache = HashMap::new();
+        let mut sum = 0;
+        for &ans in &self.answers {
+            let response = compute_response(guess, ans);
+            sum += *cache
+                .entry(response)
+                .or_insert_with(|| table.count_eliminations(guess, response))
+        }
+        sum
     }
 
     /// returns sum of number of words that would be eliminated by `guess` for each remaining
