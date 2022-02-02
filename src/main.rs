@@ -1,4 +1,5 @@
 use clap::Parser;
+use float_ord::FloatOrd;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -271,6 +272,12 @@ impl WordTable {
 }
 
 #[derive(Debug, Clone)]
+struct GuessInfo {
+    guess: u64,
+    score: f64,
+}
+
+#[derive(Debug, Clone)]
 struct Solver {
     /// guess-only list
     guesses: Vec<u64>,
@@ -280,6 +287,8 @@ struct Solver {
     responses: Vec<Response>,
     /// whether we are playing in hard mode
     hard_mode: bool,
+    /// strategy for solver
+    strategy: Strategy,
 }
 
 impl Solver {
@@ -292,55 +301,59 @@ impl Solver {
             answers,
             responses: Vec::new(),
             hard_mode: false,
+            strategy: Strategy::Mean,
         }
     }
 
-    fn make_guess(&self) -> u64 {
+    fn make_guess(&self) -> GuessInfo {
         let table = WordTable::from_words(&self.answers);
-        self.guesses
+        let guess = self
+            .guesses
             .par_iter()
             .copied()
             .chain(self.answers.par_iter().copied())
-            .max_by_key(|g| self.eliminated_words_from_table(*g, &table))
-            .expect("no more remaining valid guesses =(")
-    }
-
-    #[inline]
-    /// returns number of eliminations that would occur if `guess` got `response`
-    fn count_eliminations(&self, guess: u64, response: Response) -> usize {
-        self.answers
-            .iter()
-            .copied()
-            .filter(|cand| eliminates(guess, response, *cand))
-            .count()
+            .max_by_key(|g| self.score_from_table(*g, &table))
+            .expect("no more remaining valid guesses =(");
+        let score = self.score_from_table(guess, &table).0;
+        GuessInfo { guess, score }
     }
 
     /// returns sum of number of words that would be eliminated by `guess` for each remaining
     /// possible answer, but faster
-    fn eliminated_words_from_table(&self, guess: u64, table: &WordTable) -> usize {
+    fn score_from_table(&self, guess: u64, table: &WordTable) -> FloatOrd<f64> {
+        // cache of response -> words eliminated
         let mut cache = HashMap::new();
-        let mut sum = 0;
+        // number of times response has been encountered
+        let mut counts = HashMap::new();
         for &ans in &self.answers {
             let response = compute_response(guess, ans);
-            sum += *cache
+            cache
                 .entry(response)
-                .or_insert_with(|| table.count_eliminations(guess, response))
+                .or_insert_with(|| table.count_eliminations(guess, response));
+            *counts.entry(response).or_default() += 1usize;
         }
-        sum
-    }
-
-    /// returns sum of number of words that would be eliminated by `guess` for each remaining
-    /// possible answer
-    fn eliminated_words(&self, guess: u64) -> usize {
-        let mut cache = HashMap::new();
-        let mut sum = 0;
-        for &ans in &self.answers {
-            let response = compute_response(guess, ans);
-            sum += *cache
-                .entry(response)
-                .or_insert_with(|| self.count_eliminations(guess, response))
+        match self.strategy {
+            Strategy::Mean => {
+                let total_elims: usize = cache
+                    .into_iter()
+                    .map(|(resp, elims)| counts.get(&resp).unwrap() * elims)
+                    .sum();
+                FloatOrd(total_elims as f64 / self.answers.len() as f64)
+            }
+            Strategy::Median => {
+                let mut responses: Vec<Response> = counts.keys().cloned().collect();
+                responses.sort_unstable_by_key(|r| cache.get(r).unwrap());
+                let mut sum = 0;
+                for response in responses {
+                    sum += counts.get(&response).unwrap();
+                    if sum >= self.answers.len() / 2 {
+                        return FloatOrd(*cache.get(&response).unwrap() as f64);
+                    }
+                }
+                unreachable!()
+            }
+            Strategy::Worst => FloatOrd(cache.values().copied().min().unwrap_or_default() as f64),
         }
-        sum
     }
 
     /// learn from a guess / response pair
@@ -376,6 +389,26 @@ fn print_time(duration: std::time::Duration) -> String {
     return format!("{} μs", duration.as_micros());
 }
 
+fn format_score(guess_info: &GuessInfo, solver: &Solver) -> String {
+    match solver.strategy {
+        Strategy::Mean => {
+            let expected_eliminations = guess_info.score;
+            let expected_remnants = solver.answers.len() as f64 - expected_eliminations;
+            format!("expected remnants = {:.1}", expected_remnants)
+        }
+        Strategy::Median => {
+            let expected_eliminations = guess_info.score;
+            let expected_remnants = solver.answers.len() as f64 - expected_eliminations;
+            format!("median remnants = {:.1}", expected_remnants)
+        }
+        Strategy::Worst => {
+            let expected_eliminations = guess_info.score;
+            let expected_remnants = solver.answers.len() as f64 - expected_eliminations;
+            format!("worst-case remnants = {:.1}", expected_remnants)
+        }
+    }
+}
+
 fn main() {
     let mut opts = Options::parse();
 
@@ -389,6 +422,7 @@ fn main() {
     if opts.hard_mode {
         solver.hard_mode = true;
     }
+    solver.strategy = opts.strategy;
 
     // check guesses
     for guess in opts.guesses.iter_mut() {
@@ -444,21 +478,19 @@ fn main() {
 
         // generate guess
         let start = std::time::Instant::now();
-        let guess = solver.make_guess();
+        let guess_info = solver.make_guess();
         let end = std::time::Instant::now();
-        let expected_eliminations =
-            solver.eliminated_words(guess) as f64 / solver.answers.len() as f64;
-        let expected_remnants = solver.answers.len() as f64 - expected_eliminations;
+
         println!(
-            "guess: {} (generated in {}, expected remnants = {:.1})",
-            u64_to_word(guess),
+            "guess: {} (generated in {}, {})",
+            u64_to_word(guess_info.guess),
             print_time(end - start),
-            expected_remnants
+            format_score(&guess_info, &solver)
         );
 
         // read and learn from response
         let response = read_response();
-        solver.learn(guess, response);
+        solver.learn(guess_info.guess, response);
 
         // exit if we are done!
         if response.iter().all(|c| *c == Color::Green) {
@@ -466,6 +498,16 @@ fn main() {
             break;
         }
     }
+}
+
+#[derive(clap::ArgEnum, Debug, Clone, Copy)]
+enum Strategy {
+    /// guess the word with the best mean eliminations
+    Mean,
+    /// guess the word with the best median eliminations
+    Median,
+    /// guess the word with the best worst-case eliminations
+    Worst,
 }
 
 #[derive(clap::Parser)]
@@ -480,6 +522,10 @@ struct Options {
     ///
     /// `wordle` will prompt for the responses to each
     guesses: Vec<String>,
+
+    #[clap(short, long, arg_enum, default_value = "mean")]
+    /// which strategy to use
+    strategy: Strategy,
 }
 
 #[cfg(test)]
@@ -597,9 +643,10 @@ mod tests {
             answers: vec![crick, crimp],
             responses: vec![],
             hard_mode: false,
+            strategy: Strategy::Mean,
         };
 
-        assert_eq!(solver.make_guess(), crimp);
+        assert_eq!(solver.make_guess().guess, crimp);
     }
 
     #[test]
